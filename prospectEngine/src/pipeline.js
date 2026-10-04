@@ -137,6 +137,7 @@ async function profileDomain({ domain, pages, factsProvider, targetTypes, search
 
   let payload;
   let qualification;
+  let people = [];
 
   if (extracted.ok) {
     const { profile } = extracted;
@@ -156,6 +157,17 @@ async function profileDomain({ domain, pages, factsProvider, targetTypes, search
       evidence: profile.evidence,
     };
     qualification = qualifyProfile({ profile, icp, searchPlan });
+    people = profile.people
+      .map((person) =>
+        normalizeContact({
+          full_name: person.name,
+          title: person.title,
+          source_url: home.url,
+          page_id: home.id,
+          evidence: [person.quote],
+        }),
+      )
+      .filter((contact) => contact.full_name);
   } else {
     payload = deterministicExtract(classify(home.html, home.url), home.html, home.url)?.payload ||
       emptyCompanyPayload();
@@ -180,7 +192,7 @@ async function profileDomain({ domain, pages, factsProvider, targetTypes, search
     product_name: icp?.name || null,
   });
 
-  return { companyName: payload.company_name, status: qualification.status };
+  return { companyName: payload.company_name, status: qualification.status, people };
 }
 
 export async function runExtraction({
@@ -267,6 +279,8 @@ export async function runExtraction({
     new Map();
   const contactCandidateDomains =
     new Set();
+  const profilePeople =
+    new Map();
 
   let companyRecords = 0;
 
@@ -290,6 +304,8 @@ export async function runExtraction({
     if (company.companyName) {
       companyNames.set(domain, company.companyName);
     }
+
+    profilePeople.set(domain, company.people);
 
     if (company.status === "qualified") {
       qualifiedDomains.add(domain);
@@ -335,6 +351,8 @@ export async function runExtraction({
           pagesByDomain.get(
             domain,
           ),
+        extraContacts:
+          profilePeople.get(domain) || [],
         runId,
         icp,
       });

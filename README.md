@@ -1,183 +1,146 @@
 # GTM
 
-GTM is a B2B go-to-market platform for discovering companies and the people who work at them from the open web, then turning that raw data into actionable prospect lists.
+GTM is a B2B go-to-market platform for finding companies and the people who run them from the open web, then turning that into prospect lists.
 
-Today the project consists of a single backend service — the **Prospect Engine** — which finds companies matching a query and extracts their key contacts. The frontend does **not** exist yet.
+We are at **stage 1: the prospect finder** (`prospectEngine/`). Given a product profile (ICP) and a query, it finds matching companies, checks each one against the ICP, and extracts its decision-makers. Email verification, outreach and CRM come later, once finder quality meets the bar in the PRD.
 
-## What the Prospect Engine does today
+## Ground rules
 
-Given a natural-language query (for example, *"Find Indian companies in the solar industry that use SAP"*), the engine:
+- **Built in-house.** AI APIs (OpenAI) are allowed. Search, data sources and crawling are our own: self-hosted SearXNG and our own Crawlee crawler. No paid or third-party search, data or fetch services (Jina stays off).
+- **LinkedIn only through public data.** We store LinkedIn URLs found on company websites and read names and headlines from public search-result snippets. We never log in to LinkedIn or fetch its pages.
+- **Respect sites.** robots.txt is honoured. Sites that block the crawler (HTTP 403) are skipped, not evaded.
+- **The LLM returns facts, code decides.** Every approval or rejection is made by plain code and stored with a readable reason.
 
-1. Generates a set of concrete web-search queries.
-2. Searches the web via SearXNG.
-3. Filters and ranks the results for relevance.
-4. Crawls the surviving company websites.
-5. Parses each page to extract company details and contact people.
-6. Deduplicates people across sources.
-7. Persists everything to PostgreSQL.
-
-The result is a structured list of companies, each with its highest-confidence contacts and leadership roles, saved as JSON and stored in the database.
-
-## Backend pipeline
+## How a run works
 
 ```mermaid
 flowchart LR
-    A[User Query] --> B[Query Generation]
-    B --> C[SearXNG]
-    C --> D[URL Filtering / Relevance]
-    D --> E[Crawlee]
-    E --> F[Jina / Parsing]
-    F --> G[Company Extraction]
-    F --> H[Contact Extraction]
-    G --> I[Dedup]
-    H --> I
-    I --> J[PostgreSQL]
+    A[Query + ICP] --> B[LLM search plan]
+    B --> C[SearXNG, rotating engines]
+    C --> D[Blocklist + LLM relevance facts]
+    D -->|directories / listicles| E[Mine company links]
+    E --> D
+    D --> F[Crawlee crawl]
+    F --> G[Homepage profile: LLM facts]
+    G --> H[qualifyProfile in code]
+    H -->|not rejected| I[Contacts: site pages + named leaders + LinkedIn snippets]
+    I --> J[Dedup + PostgreSQL]
 ```
 
-| Stage | Component | Notes |
+| Stage | Code | What it does |
 | --- | --- | --- |
-| Query Generation | `discovery/queryGenerator.js` | Gemini builds a search plan; falls back to template queries when the LLM is disabled |
-| Search | `sources/searxng/` | SearXNG + dork queries, with caching and domain dedupe |
-| Relevance | `relevance/companyRelevance.js` | Deterministic filters (social/directory/search pages, non-HTML assets) then LLM classification/ranking |
-| Crawl | `crawl/crawlers.js` | Crawlee `CheerioCrawler` with sitemap + internal-link discovery, robots.txt, rate limits, retries |
-| Parsing | `parse/index.js` | Tiered: deterministic DOM → Jina markdown → local HTML→markdown → LLM |
-| Company Extraction | `parse/`, `extraction/` | Company name, industry, products/services, technology signals |
-| Contact Extraction | `parse/contact.js` | Names, titles, emails, phones, role categories |
-| Dedup | `dedup/crossSource.js` | Merges people by email, phone, profile URL or exact name; fuzzy names become review candidates |
-| Storage | `storage/` | PostgreSQL with SQL migrations |
+| Search plan | `discovery/queryGenerator.js` | LLM turns the query + ICP into short buyer-side queries ("business coaches Pune India") plus target location and company size. Queries never name the product the prospects use, so vendors of it are not surfaced. Falls back to templates without an LLM. |
+| Search | `channels/search.js`, `sources/searxng/` | Each query goes to a rotating slice of SearXNG engines (`SEARXNG_ENGINES`, `SEARXNG_ENGINES_PER_QUERY`). Empty results are not cached. |
+| Relevance | `relevance/companyRelevance.js`, `relevance/blocklist.js` | Blocklist and listicle titles first, then one LLM call per batch of domains. The LLM returns facts (company website?, matches the plan?, sells what the target needs?, large enterprise?) and `decideFromFacts` approves, rejects or sends to review. |
+| Directory mining | `sources/public/index.js` | Rejected directory and listicle pages are crawled for the company websites they link to, which then go through relevance. The same collector powers the per-product public source harvest. |
+| Crawl | `crawl/crawlers.js` | Crawlee `CheerioCrawler` with sitemap and internal-link discovery, robots.txt, rate limits and retries. |
+| Company profile | `extraction/companyExtractor.js` | One record per domain. The LLM reads the homepage plus up to two about/services pages and returns name, business type, what they sell, B2B/B2C, country, size bucket, operating company or not, matching ICP types, named leaders, and supporting quotes. Quotes and people not actually on the page are dropped. |
+| Qualification | `qualification/qualify.js` (`qualifyProfile`) | Code decides `qualified` / `review` / `not_qualified` from those facts: location, size limit, B2B, ICP type, operating company. Any unknown goes to review. |
+| Contacts | `parse/`, `pipeline.js` | For companies not rejected: people from team/about/contact pages, LinkedIn links on the site, leaders named in the profile step, and (if the site lists nobody) `site:linkedin.com/in` search snippets. Strict name and job-title checks keep headings, taglines and service lists out. |
+| Dedup | `parse/contact.js`, `dedup/crossSource.js` | Within a company, contacts merge transitively on personal email, unique phone, first + last name, or profile URL. Shared phones and role emails never merge people. Across companies, name matches only become review candidates. |
+| Storage | `storage/` | PostgreSQL: `raw_pages`, `raw_records` (with `run_id`, `qualification_status`, `qualification_reasons`), `crawl_targets`, `product_sources`. |
 
-## Implementation status
+## Status
 
-### Working
+Done (see the "Stage 1" section of the PRD for detail):
 
-- End-to-end discovery → crawl → parse → extract → dedup → persist pipeline (CLI `src/index.js`).
-- Query generation with Gemini and a non-LLM fallback.
-- SearXNG discovery with dork queries, result caching, and domain dedupe.
-- Deterministic URL filtering plus LLM relevance ranking.
-- Crawlee crawling with sitemap and internal-link discovery, robots.txt, rate limiting, retries and backoff.
-- Tiered page parsing (deterministic → Jina → local markdown → LLM).
-- Company and contact extraction with confidence scoring.
-- Cross-source person dedupe.
-- PostgreSQL schema and migrations (`raw_pages`, `raw_records`, `crawl_targets`, `suppression`, `email_checks`).
-- BullMQ/Redis job queue for discovery, crawl, and extraction.
-- HTTP API: `/health`, `/ready`, `POST /discover`, `POST /crawl`, `POST /extract`, `GET /jobs/:id`.
+- Multi-engine search with rotation, LLM search planning, directory mining
+- Vendor and enterprise filtering at relevance
+- One profile per company with fact-based qualification
+- Contact quality fixes, LinkedIn URLs from public sources, leader extraction, dedup fixes
+- Dashboard (`prospectEngine/dashboard`, Vite + React) for running the finder and browsing companies and people
 
-### Partial / needs improvement
+Open:
 
-- **LLM company extraction with technology signals** (`extraction/companyExtractor.js`) is implemented but not wired into the main pipeline.
-- **GitHub enrichment** (`github/`) — org matching, public members, repositories, tech hints — implemented but not wired into the pipeline.
-- **MCA (India Ministry of Corporate Affairs) enrichment** (`mca/`) — company and director matching — implemented but not wired into the pipeline.
-- **Email verification** — the `email_checks` table and `suppression` table exist, but verification is not yet implemented.
-- **Fuzzy-name dedupe** only surfaces review candidates; it never auto-merges.
-
-### Planned
-
-- Next.js frontend (see below).
-- Email verification.
-- Personalization and outreach.
-- CRM / GTM integration.
-- Signals and enrichment at scale.
-- Scaling and hardening of the queue and crawl infrastructure.
+- Draft eval labels in `prospectEngine/test/fixtures/domains.csv` need a human check, then wiring into `npm run test:eval` with saved inputs so precision is measured the same way every run.
+- Tests write to the dev database (the `acmecontact.com` fixture people). They need their own database.
+- Free search engines rate-limit after many runs in a row; runs recover after a pause.
+- Playwright fallback for JavaScript-only sites is deferred (about 1 page in 300 needed it).
+- Product question: are LinkedIn or social-media agencies LinkAssist prospects? They are currently labelled `vendor`.
 
 ## Tech stack
 
 | Layer | Technology |
 | --- | --- |
-| Runtime | Node.js 22 (ESM) |
+| Runtime | Node.js 22 (ESM, JavaScript) |
 | Database | PostgreSQL 16 (`pg`) |
-| Queue | Redis 7 + BullMQ (`ioredis`) |
-| Search | SearXNG |
-| Crawling | Crawlee (`CheerioCrawler`) |
-| Page parsing | Jina AI Reader (`r.jina.ai`) + Cheerio |
-| LLM | Google Gemini (`@google/genai`) or OpenAI |
-| Validation | `zod` |
-| Config | `dotenv` |
+| Queue | Redis 7 + BullMQ |
+| Search | Self-hosted SearXNG (`prospectEngine/searxng/settings.yml`) |
+| Crawling | Crawlee `CheerioCrawler` |
+| LLM | OpenAI (`OPENAI_MODEL`, currently `gpt-4.1`) for planning, relevance and company profiles |
+| Dashboard | Vite + React + Tailwind |
 
-## Running the Prospect Engine locally
+## Running locally
 
-The fastest path is Docker Compose, which brings up Postgres, Redis, SearXNG, the API, and the worker together.
+Docker Compose brings up Postgres, Redis, SearXNG, migrations, the API and the worker:
 
 ```bash
 cd prospectEngine
-cp .env.example .env   # if an example file is provided; otherwise create .env
-docker compose up --build
+docker compose up -d --build
+docker compose --profile ui up -d dashboard   # dashboard on http://localhost:5173
 ```
 
-To run without Docker:
+After changing backend code, rebuild the API and worker (`docker compose up -d --build api worker`), since their images contain the source.
+
+Without Docker for the app (still needs Postgres and SearXNG running):
 
 ```bash
 cd prospectEngine
 npm install
-npm run migrate        # apply SQL migrations
-npm run api            # start the HTTP API on :3000
-npm run worker         # start the BullMQ worker
-npm start              # run the pipeline once via the CLI
+npm run migrate
+npm start          # one CLI run of USER_QUERY, prints companies and contacts for this run
+npm run api        # HTTP API on :3000
+npm run worker     # BullMQ worker
 ```
 
-Useful npm scripts: `test:parse`, `test:company`, `test:contact`, `test:dedup`, `test:discovery`, `test:relevance`, `test:health`, `test:api`.
+Tests: `test:parse`, `test:company`, `test:contact`, `test:dedup`, `test:discovery`, `test:relevance`, `test:eval`, `test:api`, `test:health`.
 
 ## Environment variables
 
-Configure these in `prospectEngine/.env`. Values shown here are names only — **never commit real secrets**.
+Set in `prospectEngine/.env` (never commit it):
 
 | Variable | Purpose |
 | --- | --- |
-| `USER_QUERY` | The discovery query (e.g. *"Find Indian companies in the solar industry that use SAP"*) |
-| `DATABASE_URL` / `DB_*` | PostgreSQL connection (host, port, name, user, password) |
-| `REDIS_ENABLED`, `REDIS_URL` / `REDIS_*` | Redis / BullMQ queue connection |
-| `SEARXNG_URL` | SearXNG endpoint |
-| `LLM_ENABLED`, `LLM_PROVIDER` | Enable LLM and choose `gemini` or `openai` |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` | LLM provider credentials (secrets) |
-| `JINA_ENABLED`, `JINA_API_KEY` | Jina AI Reader for clean markdown |
-| `GITHUB_TOKEN` | GitHub enrichment (secret) |
-| `MCA_*` | MCA enrichment (endpoint, key) |
-| `DISCOVERY_*`, `CRAWL_*`, `SEARCH_*` | Discovery, crawl, and search tuning (limits, concurrency, delays) |
+| `USER_QUERY` | Query for CLI runs |
+| `DATABASE_URL` / `DB_*` | PostgreSQL connection |
+| `REDIS_ENABLED`, `REDIS_*` | Queue connection |
+| `SEARXNG_URL`, `SEARXNG_ENGINES`, `SEARXNG_ENGINES_PER_QUERY`, `SEARXNG_QUERY_DELAY_MS` | Search endpoint, engine pool, engines per query, pause between queries |
+| `OPENAI_ENABLED`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `RELEVANCE_ENABLED` | LLM for planning, relevance and profiles |
+| `CRAWL_MAX_CANDIDATES`, `CRAWL_MAX_PAGES_PER_DOMAIN` | Companies crawled per run and pages per company |
+| `CRAWLER_CONTACT_URL` | Contact page the crawler identifies itself with; set a real one |
+| `JINA_ENABLED` | Keep `false` (third-party fetch service) |
 
-Secrets such as API keys and passwords are read from the environment and never hardcoded.
+## HTTP API
 
-## Planned architecture
-
-The current system is backend-only. A **Next.js frontend** will be added later as a separate application under `Frontend/`. It will talk to the Prospect Engine's HTTP API and display discovered companies, contacts, and enrichment results.
-
-> The frontend is **not implemented yet** — `Frontend/` is currently empty.
-
-## Future GTM stages
-
-Beyond the Prospect Engine, the broader GTM roadmap includes:
-
-1. **Email verification** — validate contact emails (MX, catch-all, SMTP) before outreach.
-2. **Personalization / outreach** — generate personalized messages and run outreach campaigns.
-3. **CRM / GTM integration** — push verified prospects into CRMs and GTM tools.
-4. **Signals** — intent and firmographic signals (technology usage, hiring, funding, GitHub activity, MCA filings).
-5. **Scaling** — queue throughput, crawl capacity, caching, and multi-source ingestion.
+`GET /health`, `GET /ready`, `POST /finder` (query + ICP), `GET /jobs/:id`, `GET /dashboard`, `GET /index/search`, `GET|POST|DELETE /index/sources`, `POST /index/harvest`, `GET /search/diagnostic`, plus the older `POST /discover`, `/crawl`, `/extract`.
 
 ## Project structure
 
-```
+```text
 GTM/
-├── Frontend/          # Next.js frontend (planned, currently empty)
-└── prospectEngine/    # Prospect Engine backend (Node.js)
+├── README.md
+├── Prospect Engine — Quality Fixes PRD & Dev Plan.md   # quality plan and stage 1 progress
+└── prospectEngine/
+    ├── dashboard/      # Vite + React dashboard
+    ├── searxng/        # SearXNG engine settings
     ├── src/
-    │   ├── api/        # HTTP API server
-    │   ├── bin/        # Entry points (api, worker)
-    │   ├── channels/   # Search backend abstraction
-    │   ├── crawl/      # Crawlee crawler + link/sitemap discovery
-    │   ├── dedup/      # Cross-source person dedupe
-    │   ├── discovery/  # Query generation + discovery service
-    │   ├── extraction/ # LLM company extraction (tech signals)
-    │   ├── github/     # GitHub enrichment
-    │   ├── jobs/       # BullMQ queue + worker processors
-    │   ├── lib/        # URL, dedupe, logging helpers
-    │   ├── mca/        # MCA (India) enrichment
-    │   ├── parse/      # Parsing tiers + contact/company extractors
-    │   ├── relevance/  # URL filtering + relevance ranking
-    │   ├── sources/    # Search sources (SearXNG)
-    │   ├── storage/    # PostgreSQL access + migrations
-    │   ├── config.js   # Environment-based configuration
-    │   ├── health.js   # Health / readiness checks
-    │   ├── index.js    # CLI single-run pipeline
-    │   └── pipeline.js # Reusable extraction stage
-    ├── test/           # Node test scripts
-    ├── Dockerfile
-    └── docker-compose.yml
+    │   ├── api/            # HTTP API
+    │   ├── bin/            # api and worker entry points
+    │   ├── channels/       # search backend with engine rotation
+    │   ├── crawl/          # Crawlee crawler, sitemap and link discovery
+    │   ├── dedup/          # cross-source person dedupe
+    │   ├── discovery/      # search planning, search rounds, directory mining
+    │   ├── extraction/     # homepage company profile (LLM facts)
+    │   ├── icp/            # product ICP definitions
+    │   ├── jobs/           # BullMQ queues and processors
+    │   ├── lib/            # names, URLs, logging
+    │   ├── parse/          # page parsing and contact extraction
+    │   ├── qualification/  # code-based qualification
+    │   ├── relevance/      # blocklist and relevance decisions
+    │   ├── sources/        # SearXNG source, LinkedIn snippets, public source harvest
+    │   ├── storage/        # PostgreSQL access and migrations
+    │   ├── finder.js       # finder job: discover → crawl → extract
+    │   ├── index.js        # CLI single run
+    │   └── pipeline.js     # extraction: company profiles, qualification, contacts
+    └── test/
 ```

@@ -148,6 +148,7 @@ const ProfileSchema = z.object({
   company_size: z.enum(SIZE_VALUES),
   is_operating_company: z.boolean().nullable(),
   matching_target_types: z.array(z.string()),
+  people: z.array(z.object({ name: z.string(), title: z.string(), quote: z.string() })),
   evidence: z.array(z.object({ field: z.string(), quote: z.string() })),
 });
 
@@ -164,6 +165,15 @@ const PROFILE_JSON_SCHEMA = {
     company_size: { type: "string", enum: SIZE_VALUES },
     is_operating_company: { type: ["boolean", "null"] },
     matching_target_types: { type: "array", items: { type: "string" } },
+    people: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, title: { type: "string" }, quote: { type: "string" } },
+        required: ["name", "title", "quote"],
+        additionalProperties: false,
+      },
+    },
     evidence: {
       type: "array",
       items: {
@@ -176,7 +186,7 @@ const PROFILE_JSON_SCHEMA = {
   },
   required: [
     "company_name", "business_type", "what_they_sell", "offerings", "sells_to", "country",
-    "city", "company_size", "is_operating_company", "matching_target_types", "evidence",
+    "city", "company_size", "is_operating_company", "matching_target_types", "people", "evidence",
   ],
   additionalProperties: false,
 };
@@ -246,6 +256,10 @@ Return:
 - matching_target_types: the items from this list that describe the company,
   copied exactly; [] when none fit:
 ${targetTypes.length ? targetTypes.map((type) => `  - ${type}`).join("\n") : "  (no list given; return [])"}
+- people: founders, owners, partners and leaders named on the pages (max 6),
+  with their title ("" if not stated) and a short exact quote from the pages
+  that contains their name. On a personal-brand site, include the person the
+  site is about. Never include clients, testimonial authors or blog authors.
 - evidence: short exact quotes copied from the pages that support company_name,
   business_type, sells_to, country and company_size (field = the fact name)
 
@@ -280,6 +294,15 @@ export async function extractCompanyProfile({ domain, pages, provider, targetTyp
     [page.title, page.description, ...page.headings, page.text].join(" ")).join(" "));
   profile.evidence = profile.evidence.filter((item) => quoteKey(item.quote) && corpus.includes(quoteKey(item.quote)));
   profile.matching_target_types = profile.matching_target_types.filter((type) => targetTypes.includes(type));
+  profile.people = profile.people.filter((person) =>
+    quoteKey(person.name) &&
+    quoteKey(person.quote).includes(quoteKey(person.name)) &&
+    corpus.includes(quoteKey(person.quote)));
+
+  // A solo personal-brand site is named after its owner.
+  if (!profile.people.length && profile.company_size === "solo" && corpus.includes(quoteKey(profile.company_name))) {
+    profile.people = [{ name: profile.company_name, title: "", quote: profile.company_name }];
+  }
 
   return { ok: true, profile };
 }

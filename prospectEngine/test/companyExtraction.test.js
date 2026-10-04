@@ -194,7 +194,7 @@ async function main() {
   const goodProfile = {
     company_name: "Kredis Consulting", business_type: "B2B sales consultancy", what_they_sell: "Lead generation",
     offerings: [], sells_to: "b2b", country: "India", city: "Mumbai", company_size: "small",
-    is_operating_company: true, matching_target_types: ["consulting firms"],
+    is_operating_company: true, matching_target_types: ["consulting firms"], people: [],
     evidence: [{ field: "country", quote: "Mumbai, India" }],
   };
 
@@ -225,7 +225,7 @@ async function main() {
   await test("extractCompanyProfile: homepage first, invented quotes and types dropped", async () => {
     const pages = [
       { url: "https://kredis.in/blog/post", html: "<title>Blog</title>" },
-      { url: "https://kredis.in/about-us", html: "<title>About</title><body>Team of 12 in Mumbai</body>" },
+      { url: "https://kredis.in/about-us", html: "<title>About</title><body>Team of 12 in Mumbai. Founded by Tej Gandhi, Managing Partner.</body>" },
       { url: "https://kredis.in/", html: "<title>Kredis</title><body>Kredis Consulting, Mumbai, India</body>" },
     ];
     assert.deepEqual(pickProfilePages(pages).map((p) => p.url), ["https://kredis.in/", "https://kredis.in/about-us"]);
@@ -233,7 +233,10 @@ async function main() {
     const provider = {
       name: "fake",
       async complete() {
-        return { attempted: true, ok: true, data: { ...goodProfile, matching_target_types: ["consulting firms", "made up"], evidence: [
+        return { attempted: true, ok: true, data: { ...goodProfile, matching_target_types: ["consulting firms", "made up"], people: [
+          { name: "Tej Gandhi", title: "Managing Partner", quote: "Founded by Tej Gandhi, Managing Partner" },
+          { name: "Ravi Kumar", title: "CEO", quote: "Ravi Kumar leads the firm" },
+        ], evidence: [
           { field: "country", quote: "Mumbai, India" },
           { field: "company_size", quote: "500 employees worldwide" },
         ] } };
@@ -243,6 +246,7 @@ async function main() {
     assert.equal(result.ok, true);
     assert.deepEqual(result.profile.evidence.map((e) => e.quote), ["Mumbai, India"]);
     assert.deepEqual(result.profile.matching_target_types, ["consulting firms"]);
+    assert.deepEqual(result.profile.people.map((p) => p.name), ["Tej Gandhi"]);
 
     const failed = await extractCompanyProfile({ domain: "kredis.in", pages, provider: { name: "disabled" } });
     assert.equal(failed.ok, false);

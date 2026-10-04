@@ -291,6 +291,7 @@ export async function parseCompanyContacts({
   jina,
   version,
   pages: providedPages = null,
+  extraContacts = [],
   runId = null,
   icp = null,
   limit = 200,
@@ -322,7 +323,7 @@ export async function parseCompanyContacts({
     extracted.push(...result.contacts);
   }
 
-  const merged = dedupeContacts(extracted);
+  const merged = dedupeContacts([...extracted, ...extraContacts]);
 
   const persisted = [];
 
