@@ -310,3 +310,16 @@ One PR per task ID (for example "B4: role emails never create a person"). Small 
 - [ ] **LLM budget per run.** A3 cuts calls, D3 adds one per homepage. Is there a per-run cap on Gemini spend?
 - [ ] **Review queue owner.** Items marked `review` need a person to clear them. Who, and how often?
 - [ ] **One-word names.** Are single-name contacts (common on Indian sites) worth keeping if they have a title and personal email, or should they always go to review?
+
+## Stage 1: in-house prospect flow (Oct 4, 2026)
+
+Rule: AI APIs (OpenAI) are allowed; search, data sources and crawling are our own. No paid or third-party search, data or fetch services (Jina stays off).
+
+- [x] **S1. Multi-engine search.** Enable more SearXNG engines and rotate them per query so no single engine gets rate-limited.
+- [x] **S2. Directory mining.** Search results rejected as directories or listicles are crawled for the company websites they link to, and those go through relevance (PRD A5).
+- [x] **S3. LinkedIn URLs, public only.** Store LinkedIn profile links found on company sites; for companies with no contacts, read name and headline from `site:linkedin.com/in` search snippets. No logged-in scraping.
+- [ ] **S4. Own browser crawler.** Crawl limit raised to 40 companies × 8 pages (done). Playwright fallback deferred: only 1 of ~290 stored real pages was a JavaScript shell. Sites that block us (403) are skipped, not evaded.
+- [x] **S5. Dedup fixes.** Shared phone or role email is not identity (C1); merging is transitive (C3).
+- [ ] **S6. Eval set.** `test/fixtures/domains.csv` drafted with 126 labelled domains (`checked=no`), waiting for human review. Baseline discovery precision 0.50, recall 0.82. Real-page fixtures and wiring into `test:eval` still to do.
+- [x] **S7. Company size.** Search plan carries `company_size`; relevance rejects well-known large enterprises when the target is small.
+- [x] **S8. Post-crawl qualification (D3).** One company record per domain. The LLM extracts facts from the homepage plus up to two about/services pages (name, business type, B2B/B2C, country, size bucket, operating company, matching ICP types, supporting quotes); quotes not found on the page are dropped. `qualifyProfile` decides in code. On 20 stored domains: every large firm, the courier, the overseas SaaS and the marketplace were rejected; 7 small Indian consultancies qualified.

@@ -18,6 +18,21 @@ export const BLOCKED_DOMAINS = [
   // Social / profile networks
   "linkedin.com",
   "facebook.com",
+  "instagram.com",
+  "youtube.com",
+  "x.com",
+  "twitter.com",
+  "whatsapp.com",
+  "wa.me",
+
+  // Platforms, app stores and marketplaces
+  "google.com",
+  "apple.com",
+  "amazon.com",
+  "amazon.in",
+  "flipkart.com",
+  "wikipedia.org",
+  "crunchbase.com",
 
   // Indian directories / company databases
   "justdial.com",

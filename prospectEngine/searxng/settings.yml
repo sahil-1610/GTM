@@ -8,3 +8,16 @@ search:
 server:
   limiter: false
   image_proxy: true
+
+# Extra web engines so queries can rotate instead of rate-limiting one engine.
+engines:
+  - name: duckduckgo web
+    disabled: false
+  - name: resulthunter
+    disabled: false
+  - name: gmx
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: yep
+    disabled: false

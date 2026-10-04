@@ -11,6 +11,7 @@ import {
 
 import {
   isPlausibleName,
+  stripActionPrefix,
 } from "../../lib/names.js";
 
 // Specific card containers, matched by full class *token* (not substring) so
@@ -115,6 +116,8 @@ function extractPersonFromElement($, element, url) {
     name = clean(aria);
   }
 
+  name = stripActionPrefix(name);
+
   let title = clean($el.find(TITLE_SELECTOR).first().text());
 
   if (!title) {
@@ -156,7 +159,7 @@ function extractPersonFromElement($, element, url) {
     const href = $(a).attr("href");
 
     if (href && PROFILE_URL_RE.test(href)) {
-      profile_urls.push(href);
+      profile_urls.push(cleanProfileUrl(href) || href);
     }
   });
 
@@ -214,6 +217,35 @@ function extractAuthorByline($) {
   }
 
   return null;
+}
+
+function siteLabel(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").split(".")[0].toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function cleanProfileUrl(href) {
+  const match = String(href || "").match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return match ? `https://www.linkedin.com/in/${match[1].toLowerCase()}` : "";
+}
+
+// "/in/anurag-aggarwal-1a2b3c" -> "Anurag Aggarwal"; slugs without clear
+// word breaks yield no name. A trailing brand word ("-webhopers") is dropped.
+function nameFromLinkedInSlug(profileUrl, siteUrl) {
+  const brand = siteLabel(siteUrl);
+  const slug = decodeURIComponent(profileUrl.split("/in/")[1] || "");
+  const words = slug
+    .split("-")
+    .filter((word) => /^[a-z]+$/i.test(word) && word.toLowerCase() !== brand);
+
+  if (words.length < 2 || words.length > 4) {
+    return "";
+  }
+
+  return words.map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase()).join(" ");
 }
 
 export function deterministicContactExtract(archetype, html, url) {
@@ -314,6 +346,30 @@ export function deterministicContactExtract(archetype, html, url) {
     }
   });
 
+  // Personal LinkedIn links outside cards, e.g. a founder's link in the footer.
+  $("a[href*='linkedin.com/in/']").each((_, anchor) => {
+    if ($(anchor).parents(CARD_SELECTOR).length > 0) {
+      return;
+    }
+
+    const profileUrl = cleanProfileUrl($(anchor).attr("href"));
+    const anchorText = clean($(anchor).text());
+    const name = isPlausibleName(anchorText)
+      ? anchorText
+      : nameFromLinkedInSlug(profileUrl, url);
+
+    if (profileUrl && isPlausibleName(name)) {
+      candidates.push({
+        full_name: name,
+        title: "",
+        email: "",
+        phone: "",
+        profile_urls: [profileUrl],
+        source_url: url,
+      });
+    }
+  });
+
   const author = extractAuthorByline($);
 
   if (author) {
@@ -357,8 +413,12 @@ export function extractCompanyContacts(html, url) {
     }
   });
 
+  const linkedin = String($("a[href*='linkedin.com/company/']").first().attr("href") || "")
+    .match(/linkedin\.com\/company\/([^/?#]+)/i);
+
   return {
     role_emails: [...roleEmails],
     company_phones: [...phones],
+    linkedin_url: linkedin ? `https://www.linkedin.com/company/${linkedin[1].toLowerCase()}` : "",
   };
 }

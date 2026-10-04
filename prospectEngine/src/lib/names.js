@@ -177,6 +177,17 @@ const STOP_WORDS = new Set([
   "collaborative",
   "purpose",
   "driven",
+  // Button and link verbs that prefix names in contact cards ("Call Jane Doe").
+  "call",
+  "email",
+  "mail",
+  "message",
+  "connect",
+  "follow",
+  "visit",
+  "view",
+  "meet",
+  "linkedin",
 ]);
 
 // Lowercase particles are common inside names, while lowercase sentence
@@ -187,13 +198,37 @@ const NAME_PARTICLES = new Set([
 ]);
 const NAME_SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
 
+const ORG_WORDS = new Set([
+  "limited", "ltd", "pvt", "private", "llp", "llc", "inc", "corp", "corporation",
+  "company", "group", "foundation", "technologies", "solutions", "services", "agency",
+]);
+
+// Button labels such as "Call Jane Doe" or "Email Jane Doe" carry the name.
+export function stripActionPrefix(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^(call|email|e-mail|mail|message|connect with|follow|meet|view|visit)\s+/i, "");
+}
+
 export function nameKey(name) {
   return String(name || "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .replace(/['’]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/^(mr|mrs|ms|dr|ca|er|prof)\s+/, "")
+    .split(" ")
+    .filter((token) => token.length > 1)
+    .join(" ");
+}
+
+// Within one company, the same first and last name is the same person even
+// when one source adds a middle name ("Hemant Kumar Sharma").
+export function firstLastKey(name) {
+  const parts = nameKey(name).split(" ").filter(Boolean);
+  return parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1]}` : "";
 }
 
 function tokens(name) {
@@ -202,24 +237,10 @@ function tokens(name) {
     .filter((token) => token.length >= 2);
 }
 
-function isRoleOnlyName(name) {
-  const words = tokens(name);
-
-  if (!words.length) {
-    return false;
-  }
-
-  const meaningful = words.filter(
-    (word) => !STOP_WORDS.has(word)
-  );
-
-  if (!meaningful.length) {
-    return false;
-  }
-
-  return meaningful.every((word) =>
-    ROLE_WORDS.has(word)
-  );
+// Job/function words never appear in a real name, so any one of them marks a
+// heading or service label such as "Digital Marketing Mentor".
+function hasRoleWord(name) {
+  return tokens(name).some((word) => ROLE_WORDS.has(word));
 }
 
 // Whether a text fragment looks like a person's name (as opposed to a nav
@@ -227,7 +248,9 @@ function isRoleOnlyName(name) {
 export function isPlausibleName(raw) {
   const name = String(raw || "")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/^(mr|mrs|ms|dr|ca|er|prof)\.?\s+/i, "")
+    .replace(/\b([A-Za-z])\./g, "$1");
 
   if (!name) {
     return false;
@@ -275,13 +298,16 @@ export function isPlausibleName(raw) {
     return false;
   }
 
-  const capitalizedWords = parts.filter((part, index) => {
+  const nameParts = parts.filter((part, index) => {
     const word = normalizedParts[index];
-    if (NAME_PARTICLES.has(word) || NAME_SUFFIXES.has(word)) return false;
-    return /^[A-Z]/.test(part) || /^[A-Z]+$/.test(part);
+    return !NAME_PARTICLES.has(word) && !NAME_SUFFIXES.has(word);
   });
 
-  if (capitalizedWords.length < 2) {
+  if (nameParts.length < 2 || nameParts.some((part) => !/^[A-Z]/.test(part))) {
+    return false;
+  }
+
+  if (normalizedParts.some((part) => ORG_WORDS.has(part))) {
     return false;
   }
 
@@ -290,7 +316,7 @@ export function isPlausibleName(raw) {
     return false;
   }
 
-  if (isRoleOnlyName(name)) {
+  if (hasRoleWord(name)) {
     return false;
   }
 

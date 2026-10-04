@@ -5,26 +5,12 @@ import { buildDorkQueries } from "./dorks.js";
 
 import { normalizeUrl } from "../../lib/url.js";
 import { dedupeByDomain } from "../../lib/dedupe.js";
+import { isBlockedDomain } from "../../relevance/blocklist.js";
 
 import {
   getSearchCache,
   setSearchCache,
 } from "../../storage/localStore.js";
-
-const NON_COMPANY_DOMAINS = new Set([
-  "linkedin.com",
-  "facebook.com",
-  "instagram.com",
-  "youtube.com",
-  "twitter.com",
-  "x.com",
-  "wikipedia.org",
-  "g2.com",
-  "capterra.com",
-  "crunchbase.com",
-  "glassdoor.com",
-  "indeed.com",
-]);
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -75,7 +61,7 @@ function makeTarget({
     return null;
   }
 
-  if (NON_COMPANY_DOMAINS.has(normalized.domain)) {
+  if (isBlockedDomain(normalized.domain)) {
     return null;
   }
 
@@ -167,10 +153,14 @@ export default {
               language: "en",
               limit: config.searchResultsPerQuery,
             });
-            await setSearchCache(key, {
-              cachedAt: new Date().toISOString(),
-              results,
-            });
+            // Empty results usually mean suspended engines; caching them would
+            // hide the query from later runs.
+            if (results.length) {
+              await setSearchCache(key, {
+                cachedAt: new Date().toISOString(),
+                results,
+              });
+            }
           } catch (error) {
             console.error(`Search failed: ${query}`);
             console.error(error.message);
@@ -210,3 +200,50 @@ export default {
     );
   },
 };
+
+const LINKEDIN_SUFFIX_RE = /\s*[|·]\s*LinkedIn.*$/i;
+const COMPANY_SUFFIX_RE = /\b(pvt|private|ltd|limited|llp|llc|inc|co)\b\.?/gi;
+
+function companyKey(name) {
+  return String(name || "").replace(COMPANY_SUFFIX_RE, "").replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase();
+}
+
+// Reads people from public search-result titles such as
+// "Rahul Jain - Founder - Acme Consulting | LinkedIn". LinkedIn itself is
+// never fetched; only the search engine's title and snippet are used.
+export async function findLinkedInPeople({ companyName, location = "" }) {
+  const company = companyKey(companyName);
+  if (company.length < 3) return [];
+
+  const query = `site:linkedin.com/in "${companyName}" (founder OR CEO OR owner OR director OR partner) ${location}`.trim();
+  let results;
+  try {
+    results = await searchChannel.run({ query, limit: config.searchResultsPerQuery });
+  } catch (error) {
+    console.error(`LinkedIn search failed for ${companyName}: ${error.message}`);
+    return [];
+  }
+
+  const people = [];
+  for (const result of results) {
+    const profile = String(result.url || "").match(/linkedin\.com\/in\/([^/?#]+)/i);
+    if (!profile) continue;
+    const [name, ...rest] = String(result.title || "")
+      .replace(LINKEDIN_SUFFIX_RE, "")
+      .split(/\s+[-–—]\s+/);
+    const title = rest[0];
+    if (!name || !title) continue;
+
+    // The company must appear in the headline, not just in the person's name
+    // or the snippet, otherwise namesakes and passing mentions slip in.
+    const headline = rest.join(" ").toLowerCase().replace(/[^a-z0-9]+/g, " ");
+    if (!headline.includes(company)) continue;
+
+    people.push({
+      line: `${name.trim()} | ${title.trim()}`,
+      profileUrl: `https://www.linkedin.com/in/${profile[1].toLowerCase()}`,
+      snippet: result.content || "",
+    });
+  }
+  return people;
+}

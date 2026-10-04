@@ -29,15 +29,22 @@ const SearchPlanSchema = z.object({
       "unknown",
     ]),
 
+  company_size:
+    z.enum(["small", "mid", "large", "any"]).default("any"),
+
   search_queries:
     z
       .array(z.string())
       .min(3)
       .max(20),
+
+  supplementary_queries:
+    z.array(z.string()).default([]),
 });
 
 function cleanQueries(
   queries,
+  max = config.maxSearchQueries,
 ) {
   return [
     ...new Set(
@@ -49,7 +56,7 @@ function cleanQueries(
     ),
   ].slice(
     0,
-    config.maxSearchQueries,
+    max,
   );
 }
 
@@ -135,18 +142,94 @@ function fallbackQueries(
 
     product_or_technology: String(icp?.name || icp?.product_name || offering || "").trim(),
 
+    company_size: Number(icp?.company_size?.max) > 0 && Number(icp.company_size.max) <= 200 ? "small" : "any",
+
     relationship: ["uses", "needs", "sells", "offers", "implements", "related_to", "unknown"].includes(icp?.relationship)
       ? icp.relationship
       : "needs",
 
     search_queries:
       cleanQueries(queries),
+
+    supplementary_queries:
+      cleanQueries(queries.slice(1)),
   };
+}
+
+const PLAN_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    target_description: { type: "string" },
+    location: { type: "string" },
+    industry: { type: "string" },
+    company_type: { type: "string" },
+    product_or_technology: { type: "string" },
+    relationship: {
+      type: "string",
+      enum: ["uses", "needs", "sells", "offers", "implements", "related_to", "unknown"],
+    },
+    company_size: { type: "string", enum: ["small", "mid", "large", "any"] },
+    search_queries: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "target_description", "location", "industry", "company_type",
+    "product_or_technology", "relationship", "company_size", "search_queries",
+  ],
+  additionalProperties: false,
+};
+
+function planPrompt(userQuery, icp) {
+  const product = icp
+    ? `\nWe sell: ${icp.name || ""} ${icp.product_description || ""}\nTarget company types: ${productTypes(icp).join(", ")}\nIdeal customer: ${icp.ideal_customer || ""}\n`
+    : "";
+
+  return `You plan web searches that find the official websites of companies matching a B2B prospecting request.
+
+Request: ${userQuery}
+${product}
+Return:
+- target_description: one sentence describing the companies we want
+- location, industry, company_type: short values, "" when not specified
+- product_or_technology: the product or channel the request mentions, "" if none
+- relationship: how the target companies relate to that product
+- company_size: "small" when the request targets founders, owners, coaches,
+  consultants, agencies or other small/founder-led firms; "large" for
+  enterprises; "mid" when stated; otherwise "any"
+- search_queries: 14 different web search queries
+
+Query rules:
+- 3 to 7 words each, written the way a person types into Google
+- Describe the prospect companies themselves (their business type and location),
+  never the product they should use. For "agencies that use LinkedIn", search
+  for agencies, not for LinkedIn services, and do not mention LinkedIn.
+- Include the location in every query when one is given
+- Vary the business types and cities/regions across queries
+- No site:, inurl: or intitle: operators, no URLs, no company names
+- Quote only short exact phrases of 2 to 3 words`;
+}
+
+async function llmSearchPlan(userQuery, icp, provider) {
+  if (!provider || provider.name === "disabled") {
+    return null;
+  }
+
+  const result = await provider.complete({
+    prompt: planPrompt(userQuery, icp),
+    jsonSchema: PLAN_JSON_SCHEMA,
+  });
+
+  if (!result.ok || !result.data) {
+    console.warn(`Search planning failed, using template queries: ${result.error || "no data"}`);
+    return null;
+  }
+
+  return result.data;
 }
 
 export async function generateSearchPlan(
   userQuery,
   icp = null,
+  provider = null,
 ) {
   if (
     !userQuery ||
@@ -157,30 +240,48 @@ export async function generateSearchPlan(
     );
   }
 
-  //
-  // Deterministic, company-website-intent query generation.
-  // Queries use search dorks (inurl:, site:, -site:) that prioritise
-  // official company pages over LinkedIn profiles, directories, and articles.
-  //
   const plan =
     fallbackQueries(
       userQuery,
       icp,
     );
 
-  return SearchPlanSchema.parse(
-    plan,
-  );
-}
+  const planned =
+    await llmSearchPlan(
+      userQuery,
+      icp,
+      provider,
+    );
 
-//
-// Returns an additional set of supplementary queries for use when the
-// first round of discovery approves too few companies.
-// These are shorter / more direct queries that complement the primary set.
-//
-export function generateSupplementaryQueries(
-  userQuery,
-  icp = null,
-) {
-  return cleanQueries(companyWebsiteQueries(userQuery, icp).slice(1));
+  if (!planned) {
+    return SearchPlanSchema.parse(plan);
+  }
+
+  const product = String(planned.product_or_technology || "").trim().toLowerCase();
+  const location = String(planned.location || "").trim();
+  const buyerSearch = ["uses", "needs"].includes(planned.relationship);
+
+  // Naming the product the prospects use surfaces vendors of it, not buyers.
+  const queries = cleanQueries(
+    planned.search_queries
+      .filter((query) => !(buyerSearch && product && query.toLowerCase().includes(product)))
+      .map((query) =>
+        location && !query.toLowerCase().includes(location.toLowerCase())
+          ? `${query} ${location}`
+          : query,
+      )
+      .map((query) => `${query} ${EXCLUDE_NOISE}`),
+    Infinity,
+  );
+
+  try {
+    return SearchPlanSchema.parse({
+      ...planned,
+      search_queries: queries.slice(0, config.maxSearchQueries),
+      supplementary_queries: queries.slice(config.maxSearchQueries),
+    });
+  } catch (error) {
+    console.warn(`Search plan invalid, using template queries: ${error.message}`);
+    return SearchPlanSchema.parse(plan);
+  }
 }

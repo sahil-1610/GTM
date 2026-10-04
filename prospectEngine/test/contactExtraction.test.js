@@ -14,6 +14,7 @@ import {
 
 import {
   deterministicContactExtract,
+  extractCompanyContacts,
 } from "../src/parse/deterministic/contact.js";
 
 import {
@@ -234,6 +235,21 @@ async function main() {
       assert.equal(isPlausibleName(name), true, name);
     }
 
+    const serviceMarkdown = [
+      "Search Ads, Display Ads, YouTube Ads, remarketing, budget planning, optimisation and lead-generation-focused campaigns.",
+      "Training modules covering SEO, SEM, SMM, Email Marketing, WhatsApp Marketing, Content Strategy and AI in Marketing",
+      "Rhine Solar Limited | Digital Growth Journey",
+      "Digital Marketing Mentor | Trainer & Consultant",
+      "Managing Director | CEO",
+      "Empowering Businesses | Enabling Growth",
+      "LinkedIn Ads budget | Sales Navigator subscription, Premium subscription and third-party tools are separate from service fees.",
+      "Hemant Kumar Sharma, Digital Marketing Consultant & Trainer",
+    ].join("\n");
+    assert.deepEqual(
+      markdownContactExtract("about_page", serviceMarkdown, "https://example.in/about").map((c) => c.full_name),
+      ["Hemant Kumar Sharma"],
+    );
+
     const contacts = deterministicContactExtract(
       "team_page",
       PROSE_AS_CONTACT_HTML,
@@ -321,6 +337,45 @@ async function main() {
     assert.equal(merged[0].email, "jane@acme.com");
     assert.deepEqual(merged[0].source_urls.sort(), ["https://a.com/about", "https://a.com/team"]);
     assert.deepEqual(merged[0].page_ids.sort(), [1, 2]);
+
+    const variants = dedupeContacts([
+      normalizeContact({ full_name: "Hemant Sharma" }),
+      normalizeContact({ full_name: "Hemant K Sharma" }),
+      normalizeContact({ full_name: "Dr. Hemant Kumar Sharma", title: "Digital Marketing Consultant" }),
+      normalizeContact({ full_name: "Priya Sharma" }),
+    ]);
+    assert.deepEqual(variants.map((c) => c.full_name), ["Dr. Hemant Kumar Sharma", "Priya Sharma"]);
+
+    const sharedLine = dedupeContacts([
+      normalizeContact({ full_name: "Anil Mehta", title: "CEO", phone: "+912240001000", email: "info@acme.in" }),
+      normalizeContact({ full_name: "Ritu Rao", title: "CFO", phone: "+912240001000", email: "info@acme.in" }),
+    ]);
+    assert.equal(sharedLine.length, 2);
+
+    const chain = dedupeContacts([
+      normalizeContact({ full_name: "Neha Kapoor Joshi", title: "Founder" }),
+      normalizeContact({ full_name: "N Joshi", email: "neha@acme.in", title: "CEO" }),
+      normalizeContact({ full_name: "Neha Joshi", email: "neha@acme.in" }),
+    ]);
+    assert.equal(chain.length, 1);
+  });
+
+  await test("LinkedIn profile links become contacts; company page goes on the company", () => {
+    const html = `<html><body>
+      <div class="team-member"><h3>Priya Nair</h3><p>Founder &amp; CEO</p>
+        <a href="https://in.linkedin.com/in/priya-nair-12ab?trk=x">LinkedIn</a></div>
+      <div class="team-member"><a aria-label="Call Henrik Anderberg" href="tel:+46123456789"></a></div>
+      <footer><a href="https://www.linkedin.com/in/sandeep-thakur-acmeco/">Follow</a>
+        <a href="https://www.linkedin.com/company/acmeco/">Company</a></footer>
+    </body></html>`;
+    const contacts = deterministicContactExtract("team_page", html, "https://acmeco.in/team");
+    const byName = Object.fromEntries(contacts.map((c) => [c.full_name, c]));
+    assert.deepEqual(Object.keys(byName).sort(), ["Henrik Anderberg", "Priya Nair", "Sandeep Thakur"]);
+    assert.equal(byName["Sandeep Thakur"].profile_urls[0], "https://www.linkedin.com/in/sandeep-thakur-acmeco");
+    assert.equal(
+      extractCompanyContacts(html, "https://acmeco.in/team").linkedin_url,
+      "https://www.linkedin.com/company/acmeco",
+    );
   });
 
   await test("Tier 1 before Jina: rich page short-circuits (no Jina call)", async () => {

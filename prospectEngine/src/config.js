@@ -46,10 +46,13 @@ export const config = {
     (process.env.SEARXNG_URL || "http://127.0.0.1:8888").replace(/\/+$/, ""),
 
   searxngEngines:
-    (process.env.SEARXNG_ENGINES || "google")
+    (process.env.SEARXNG_ENGINES || "google cse,duckduckgo web,resulthunter,gmx,yandex,yep,bing")
       .split(",")
       .map((engine) => engine.trim())
       .filter(Boolean),
+
+  searxngEnginesPerQuery:
+    numberEnv("SEARXNG_ENGINES_PER_QUERY", 3),
 
   searchResultsPerQuery:
     numberEnv("SEARCH_RESULTS_PER_QUERY", 10),

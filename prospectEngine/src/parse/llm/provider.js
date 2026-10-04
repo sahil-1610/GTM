@@ -20,3 +20,13 @@ export function createProvider(config) {
       );
   }
 }
+
+// OpenAI provider for fact extraction (search planning, relevance, company
+// profiles); disabled unless OpenAI is enabled and configured.
+export function createFactsProvider(config) {
+  if (!config.relevanceEnabled || !config.openaiEnabled || !config.openaiApiKey) {
+    return createDisabledProvider();
+  }
+
+  return createOpenaiProvider(config);
+}

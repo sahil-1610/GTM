@@ -18,19 +18,32 @@ async function fetchWithTimeout(url, timeoutMs = 20000) {
   }
 }
 
+let engineCursor = 0;
+
+// Each query goes to a rotating slice of the engine pool, so no single free
+// engine sees every query and gets rate-limited.
+function enginesForQuery() {
+  const pool = config.searxngEngines;
+  const count = Math.min(config.searxngEnginesPerQuery, pool.length);
+  const picked = Array.from({ length: count }, (_, i) => pool[(engineCursor + i) % pool.length]);
+  engineCursor = pool.length ? (engineCursor + count) % pool.length : 0;
+  return picked;
+}
+
 async function searchSearxng({
   query,
   page = 1,
   language = "en",
   limit = config.searchResultsPerQuery,
 }) {
+  const engines = enginesForQuery();
   const endpoint = new URL(`${config.searxngUrl}/search`);
   endpoint.searchParams.set("q", query);
   endpoint.searchParams.set("format", "json");
   endpoint.searchParams.set("language", language);
   endpoint.searchParams.set("categories", "general");
-  if (config.searxngEngines.length) {
-    endpoint.searchParams.set("engines", config.searxngEngines.join(","));
+  if (engines.length) {
+    endpoint.searchParams.set("engines", engines.join(","));
   }
   endpoint.searchParams.set("pageno", String(page));
 
@@ -54,7 +67,7 @@ async function searchSearxng({
 
   return {
     results,
-    requestedEngines: config.searxngEngines,
+    requestedEngines: engines,
     enginesUsed: [...new Set(results.map((result) => result.engine).filter(Boolean))],
     unresponsiveEngines: Array.isArray(data.unresponsive_engines) ? data.unresponsive_engines : [],
     suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],

@@ -1,6 +1,5 @@
 import {
   generateSearchPlan,
-  generateSupplementaryQueries,
 } from "./queryGenerator.js";
 
 import searxngSource from "../sources/searxng/index.js";
@@ -10,12 +9,8 @@ import {
 } from "../storage/pgStore.js";
 
 import {
-  createOpenaiProvider,
-} from "../parse/llm/openai.js";
-
-import {
-  createDisabledProvider,
-} from "../parse/llm/disabled.js";
+  createFactsProvider,
+} from "../parse/llm/provider.js";
 
 import {
   config,
@@ -25,26 +20,66 @@ import {
   rankCandidates,
 } from "../relevance/companyRelevance.js";
 
+import {
+  collectOutboundCompanies,
+} from "../sources/public/index.js";
+
 // How many approved targets to aim for before stopping early.
 const DEFAULT_TARGET_COUNT = 10;
 
-function createRelevanceProvider() {
-  if (
-    !config.relevanceEnabled ||
-    !config.openaiEnabled
-  ) {
-    return createDisabledProvider();
+const LISTING_TYPES = new Set(["directory", "listicle", "article", "media"]);
+const MAX_LISTING_PAGES = 8;
+const MAX_LINKS_PER_LISTING = 40;
+const MAX_MINED_CANDIDATES = 150;
+
+// Rejected directories and listicles are not prospects, but the company
+// websites they link to can be (PRD A5).
+function listingPages(rejected) {
+  const pages = new Map();
+
+  for (const entry of rejected) {
+    const candidate = entry.relevance ? entry : entry.candidate;
+    const isListing = entry.relevance
+      ? LISTING_TYPES.has(entry.relevance.type)
+      : entry.reason_code === "listicle_title";
+
+    if (isListing && candidate?.url && !pages.has(candidate.url)) {
+      pages.set(candidate.url, candidate);
+    }
   }
 
-  if (
-    !config.openaiApiKey
-  ) {
-    return createDisabledProvider();
+  return [...pages.values()].slice(0, MAX_LISTING_PAGES);
+}
+
+async function mineListings({ rejected, knownDomains }) {
+  const pages = listingPages(rejected);
+
+  if (!pages.length) {
+    return [];
   }
 
-  return createOpenaiProvider(
-    config,
+  console.log("");
+  console.log(`Mining ${pages.length} directory/listicle pages for company links`);
+
+  const { candidates } = await collectOutboundCompanies(
+    pages.map((page, index) => ({ id: `listing-${index}`, url: page.url })),
+    { followInternal: false, maxCandidatesPerSource: MAX_LINKS_PER_LISTING },
   );
+
+  return candidates
+    .filter((candidate) => !knownDomains.has(candidate.domain))
+    .slice(0, MAX_MINED_CANDIDATES)
+    .map((candidate) => ({
+      ...candidate,
+      snippet: `Listed on "${candidate.parentTitle || candidate.parentUrl}"`,
+      priority: 50,
+      source_type: "listing",
+      depth: 0,
+      state: "queued",
+      discovered_by: "listing",
+      matchedQueries: [],
+      occurrences: 1,
+    }));
 }
 
 //
@@ -96,7 +131,36 @@ async function runSearchRound({
       provider,
     });
 
-  return { rawTargets, ranked };
+  const mined =
+    await mineListings({
+      rejected: ranked.rejected,
+      knownDomains: new Set(rawTargets.map((target) => target.domain)),
+    });
+
+  if (!mined.length) {
+    return { rawTargets, ranked };
+  }
+
+  console.log(`${roundLabel} mined candidates: ${mined.length}`);
+
+  const minedRanked =
+    await rankCandidates({
+      userQuery,
+      searchPlan,
+      candidates: mined,
+      provider,
+    });
+
+  return {
+    rawTargets: [...rawTargets, ...mined],
+    ranked: {
+      ...ranked,
+      approved: [...ranked.approved, ...minedRanked.approved],
+      rejected: [...ranked.rejected, ...minedRanked.rejected],
+      review: [...ranked.review, ...minedRanked.review],
+      decisions: [...ranked.decisions, ...minedRanked.decisions],
+    },
+  };
 }
 
 export async function discover(
@@ -119,10 +183,14 @@ export async function discover(
     `USER QUERY: ${userQuery}`,
   );
 
+  const provider =
+    createFactsProvider(config);
+
   const searchPlan =
     await generateSearchPlan(
       userQuery,
       icp,
+      provider,
     );
 
   console.log("");
@@ -137,9 +205,6 @@ export async function discover(
       );
     },
   );
-
-  const provider =
-    createRelevanceProvider();
 
   // ────────────────────────────────────────────────────────────────────────
   // ROUND 1 — Primary queries
@@ -184,7 +249,7 @@ export async function discover(
     );
 
     const supplementaryQueries =
-      generateSupplementaryQueries(userQuery, icp);
+      searchPlan.supplementary_queries;
 
     // De-duplicate against already-used queries.
     const usedSet = new Set(queriesUsed);

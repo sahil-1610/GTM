@@ -1,6 +1,7 @@
-import { isPlausibleName } from "../lib/names.js";
+import { firstLastKey, isPlausibleName } from "../lib/names.js";
 
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
+const MAX_TITLE_LENGTH = 80;
 
 // Role/group mailboxes that never represent an individual person. These must
 // not create people and must not be used as a person's identity key.
@@ -33,6 +34,11 @@ export function isRoleEmail(raw) {
 // roles and to decide whether a "name — title" split is actually a title.
 export const ROLE_HINT =
   /\b(ceo|cto|cfo|coo|cmo|cro|cio|founder|co[- ]?founder|president|vice president|director|manager|lead|head|chief|engineer|developer|marketing|sales|operations|revenue|growth|product|design|analyst|specialist|consultant|partner|principal|chair|executive|officer|communications|finance|people|legal|counsel|human resources)\b/i;
+
+// A free-text title needs a job noun; department words alone ("Enabling
+// Growth", "Sales") are taglines or service names.
+const JOB_TITLE_RE =
+  /\b(ceo|cto|cfo|coo|cmo|cro|cio|vp|founder|co[- ]?founder|owner|president|director|manager|lead|head|chief|engineer|developer|analyst|specialist|consultant|partner|principal|chair(?:man|person)?|executive|officer|counsel|trainer|coach|advisor|adviser|associate|architect|designer|proprietor)\b/i;
 
 // Ordered most-specific-first so "co-founder" beats "founder" and a named
 // C-level ("CEO") beats the generic "executive" bucket.
@@ -119,14 +125,16 @@ export function parseNameTitleLine(line) {
     /\s+\|\s+|\s+[–—]\s+|\s*,\s*/
   );
 
-  if (parts.length < 2) {
+  // More than two separators means a nav bar, address or comma-separated list.
+  if (parts.length < 2 || parts.length > 3) {
     return null;
   }
 
   const name = parts[0].trim();
   const title = parts.slice(1).join(" ").trim();
 
-  if (!name || !title || !ROLE_HINT.test(title)) {
+  // Questions and "Heading: subheading" lines are marketing copy, not titles.
+  if (!name || !title || title.length > MAX_TITLE_LENGTH || /[?:!]/.test(title) || !JOB_TITLE_RE.test(title)) {
     return null;
   }
 
@@ -201,16 +209,34 @@ export function normalizeContact({
   return contact;
 }
 
-function groupMatches(group, contact) {
-  return group.some(
-    (member) =>
-      (member.email && contact.email && member.email === contact.email) ||
-      (member.phone && contact.phone && member.phone === contact.phone) ||
-      (member.full_name && contact.full_name &&
-        member.full_name.toLowerCase() === contact.full_name.toLowerCase()) ||
-      (member.profile_urls.length && contact.profile_urls.length &&
-        member.profile_urls.some((u) => contact.profile_urls.includes(u)))
-  );
+function profileKey(url) {
+  return String(url || "").toLowerCase().replace(/[?#].*$/, "").replace(/\/+$/, "");
+}
+
+// Keys that identify exactly one person. A phone counts only when no other
+// candidate shares it, since switchboards and shared lines are not identity.
+function identityKeys(contact, phoneCounts) {
+  const keys = [];
+
+  if (contact.email && !isRoleEmail(contact.email)) {
+    keys.push(`email:${contact.email}`);
+  }
+
+  if (contact.phone && phoneCounts.get(contact.phone) === 1) {
+    keys.push(`phone:${contact.phone}`);
+  }
+
+  const name = firstLastKey(contact.full_name);
+
+  if (name) {
+    keys.push(`name:${name}`);
+  }
+
+  for (const url of contact.profile_urls || []) {
+    keys.push(`profile:${profileKey(url)}`);
+  }
+
+  return keys;
 }
 
 function pickBest(group) {
@@ -253,23 +279,39 @@ function mergeGroup(group) {
   return base;
 }
 
-// Deduplicates contacts within one company, preferring identity matches in
-// order: email, phone, name, then profile URL. Weak/fuzzy matches are NOT
-// merged here — only exact key matches collapse into a single contact.
+// Deduplicates contacts within one company. Contacts sharing any identity key
+// are merged transitively (union-find); fuzzy name matches are never merged.
 export function dedupeContacts(contacts) {
-  const groups = [];
+  const phoneCounts = new Map();
 
   for (const contact of contacts) {
-    const group = groups.find((g) => groupMatches(g, contact));
-
-    if (group) {
-      group.push(contact);
-    } else {
-      groups.push([contact]);
+    if (contact.phone) {
+      phoneCounts.set(contact.phone, (phoneCounts.get(contact.phone) || 0) + 1);
     }
   }
 
-  return groups.map(mergeGroup);
+  const parent = contacts.map((_, index) => index);
+  const find = (index) => (parent[index] === index ? index : (parent[index] = find(parent[index])));
+  const owner = new Map();
+
+  contacts.forEach((contact, index) => {
+    for (const key of identityKeys(contact, phoneCounts)) {
+      if (owner.has(key)) {
+        parent[find(index)] = find(owner.get(key));
+      } else {
+        owner.set(key, index);
+      }
+    }
+  });
+
+  const groups = new Map();
+
+  contacts.forEach((contact, index) => {
+    const root = find(index);
+    groups.set(root, [...(groups.get(root) || []), contact]);
+  });
+
+  return [...groups.values()].map(mergeGroup);
 }
 
 export function contactPayload(contact) {

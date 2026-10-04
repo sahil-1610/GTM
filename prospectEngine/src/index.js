@@ -363,6 +363,9 @@ async function main() {
     `USER QUERY: ${config.userQuery}`,
   );
 
+  const runId =
+    `RUN-${Date.now()}`;
+
   //
   // 1. Discovery
   //
@@ -414,10 +417,12 @@ async function main() {
 
       domains:
         runDomains,
+
+      runId,
     });
 
   //
-  // Read back only current-run domains.
+  // Read back only records written by this run.
   //
   const allCompanyRecords =
     await getRawRecords({
@@ -432,17 +437,13 @@ async function main() {
   const companyRecords =
     allCompanyRecords.filter(
       (record) =>
-        runDomains.has(
-          domainOf(record),
-        ),
+        record.run_id === runId,
     );
 
   const contactRecords =
     allContactRecords.filter(
       (record) =>
-        runDomains.has(
-          domainOf(record),
-        ),
+        record.run_id === runId,
     );
 
   const report =
@@ -452,8 +453,7 @@ async function main() {
     );
 
   const finalRun = {
-    runId:
-      `RUN-${Date.now()}`,
+    runId,
 
     generatedAt:
       new Date().toISOString(),

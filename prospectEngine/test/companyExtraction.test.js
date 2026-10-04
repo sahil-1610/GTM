@@ -37,6 +37,15 @@ import {
   closePool,
 } from "../src/storage/pg.js";
 
+import {
+  extractCompanyProfile,
+  pickProfilePages,
+} from "../src/extraction/companyExtractor.js";
+
+import {
+  qualifyProfile,
+} from "../src/qualification/qualify.js";
+
 const RICH_ABOUT = `
 <html><head>
 <title>About Us | Acme Solar</title>
@@ -179,6 +188,64 @@ async function main() {
     assert.equal(statusForConfidence(0.7), "pending");
     assert.equal(statusForConfidence(0.5), "review");
     assert.equal(statusForConfidence(null), "review");
+  });
+
+  const ICP = { company_types: ["consulting firms", "marketing agencies"], location: "India", company_size: { max: 50 }, ideal_customer: "B2B service businesses" };
+  const goodProfile = {
+    company_name: "Kredis Consulting", business_type: "B2B sales consultancy", what_they_sell: "Lead generation",
+    offerings: [], sells_to: "b2b", country: "India", city: "Mumbai", company_size: "small",
+    is_operating_company: true, matching_target_types: ["consulting firms"],
+    evidence: [{ field: "country", quote: "Mumbai, India" }],
+  };
+
+  await test("qualifyProfile: code decides from homepage facts", () => {
+    assert.equal(qualifyProfile({ profile: goodProfile, icp: ICP }).status, "qualified");
+
+    const cases = [
+      [{ company_size: "large" }, "too large (large)"],
+      [{ country: "United States" }, "based in United States, not India"],
+      [{ sells_to: "b2c" }, "sells to consumers"],
+      [{ matching_target_types: [], business_type: "courier service" }, "not a target type (courier service)"],
+      [{ is_operating_company: false }, "not an operating company"],
+    ];
+    for (const [change, reason] of cases) {
+      const result = qualifyProfile({ profile: { ...goodProfile, ...change }, icp: ICP });
+      assert.equal(result.status, "not_qualified", reason);
+      assert.ok(result.reasons.includes(reason), reason);
+    }
+
+    for (const change of [{ country: "" }, { company_size: "unknown" }, { sells_to: "unknown" }, { evidence: [] }]) {
+      assert.equal(qualifyProfile({ profile: { ...goodProfile, ...change }, icp: ICP }).status, "review", JSON.stringify(change));
+    }
+
+    const noIcp = qualifyProfile({ profile: { ...goodProfile, company_size: "large" }, searchPlan: { location: "India", company_size: "small" } });
+    assert.equal(noIcp.status, "not_qualified");
+  });
+
+  await test("extractCompanyProfile: homepage first, invented quotes and types dropped", async () => {
+    const pages = [
+      { url: "https://kredis.in/blog/post", html: "<title>Blog</title>" },
+      { url: "https://kredis.in/about-us", html: "<title>About</title><body>Team of 12 in Mumbai</body>" },
+      { url: "https://kredis.in/", html: "<title>Kredis</title><body>Kredis Consulting, Mumbai, India</body>" },
+    ];
+    assert.deepEqual(pickProfilePages(pages).map((p) => p.url), ["https://kredis.in/", "https://kredis.in/about-us"]);
+
+    const provider = {
+      name: "fake",
+      async complete() {
+        return { attempted: true, ok: true, data: { ...goodProfile, matching_target_types: ["consulting firms", "made up"], evidence: [
+          { field: "country", quote: "Mumbai, India" },
+          { field: "company_size", quote: "500 employees worldwide" },
+        ] } };
+      },
+    };
+    const result = await extractCompanyProfile({ domain: "kredis.in", pages: pickProfilePages(pages), provider, targetTypes: ICP.company_types });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.profile.evidence.map((e) => e.quote), ["Mumbai, India"]);
+    assert.deepEqual(result.profile.matching_target_types, ["consulting firms"]);
+
+    const failed = await extractCompanyProfile({ domain: "kredis.in", pages, provider: { name: "disabled" } });
+    assert.equal(failed.ok, false);
   });
 
   const stored = await getRawPagesForParse({ parseVersion: 9999, limit: 200 });

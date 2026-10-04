@@ -53,6 +53,7 @@ export function emptyCompanyPayload() {
     company_description: "",
     role_emails: [],
     company_phones: [],
+    linkedin_url: "",
   };
 }
 
@@ -62,6 +63,7 @@ export function buildCompanyPayload({
   text = "",
   roleEmails = [],
   companyPhones = [],
+  linkedinUrl = "",
 }) {
   const technologies = scanKeywords(text, TECH_KEYWORDS);
   const products = scanKeywords(text, PRODUCT_KEYWORDS);
@@ -85,6 +87,7 @@ export function buildCompanyPayload({
     company_description: String(description || "").trim(),
     role_emails: [...new Set(roleEmails || [])],
     company_phones: [...new Set(companyPhones || [])],
+    linkedin_url: linkedinUrl,
   };
 }
 

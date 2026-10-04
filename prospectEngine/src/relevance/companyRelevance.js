@@ -36,6 +36,10 @@ const DecisionSchema = z.object({
 
   matches_search_plan: z.boolean().nullable(),
 
+  sells_what_target_needs: z.boolean().nullable(),
+
+  is_large_enterprise: z.boolean().nullable(),
+
   reason_code: z.string(),
 
   evidence: z.string(),
@@ -87,6 +91,14 @@ const RELEVANCE_JSON_SCHEMA = {
             type: ["boolean", "null"],
           },
 
+          sells_what_target_needs: {
+            type: ["boolean", "null"],
+          },
+
+          is_large_enterprise: {
+            type: ["boolean", "null"],
+          },
+
           reason_code: {
             type: "string",
           },
@@ -101,6 +113,8 @@ const RELEVANCE_JSON_SCHEMA = {
           "type",
           "is_company_website",
           "matches_search_plan",
+          "sells_what_target_needs",
+          "is_large_enterprise",
           "reason_code",
           "evidence",
         ],
@@ -385,7 +399,34 @@ Set false when the company clearly does not fit.
 
 Set null only when the available title/snippet is genuinely insufficient.
 
-4. reason_code
+4. sells_what_target_needs
+
+true when the company's main business is selling or providing the product,
+tool, platform or service that the requested prospects are supposed to use
+or need. Such a company is a vendor or competitor, not a buyer.
+Example: the query wants businesses that use LinkedIn to win clients, and
+this company is a LinkedIn marketing / lead generation agency.
+
+false when the company is a potential user or buyer, or when the query
+itself asks for vendors/providers of that offering.
+
+null only when the title/snippet is genuinely insufficient.
+
+5. is_large_enterprise
+
+true when the domain belongs to a well-known large company: a multinational,
+a Big Four or global consulting firm, a global recruitment/staffing firm
+(e.g. Randstad, Michael Page), a large IT services firm, a listed company
+or a unicorn. A local office ("X India") of such a company is still large. Only for this field you may use general knowledge of
+well-known brands. false for small or mid-size firms; null when unsure.
+
+LISTING SNIPPETS:
+A snippet like 'Listed on "Top 50 B2B companies in India"' only says the
+domain was linked from that page. Do not treat the page title as evidence of
+the company's location, industry or size; judge from the domain and link text,
+and use null for matches_search_plan when they do not show it.
+
+6. reason_code
 
 Use a short snake_case reason such as:
 - matches_business_type
@@ -398,16 +439,18 @@ Use a short snake_case reason such as:
 - news_article
 - listicle
 - job_board
+- vendor_not_buyer
+- too_large
 - wrong_industry
 - wrong_geo
 - unrelated
 - insufficient_evidence
 
-5. evidence
+7. evidence
 
 Give a short statement based ONLY on the supplied title/snippet.
 
-Never invent:
+Never invent (is_large_enterprise is the one exception, see above):
 - company size
 - founders
 - products
@@ -420,6 +463,7 @@ APPROVAL LOGIC:
 A company/company_profile should be approved when:
 - is_company_website = true
 - matches_search_plan = true
+- sells_what_target_needs = false
 
 Do not reject company_profile simply because its type is company_profile.
 
@@ -510,7 +554,7 @@ export async function classifyCandidates(
 
 export function decideFromFacts(
   facts,
-  { providerName, model } = {},
+  { providerName, model, searchPlan = null } = {},
 ) {
   if (!facts) {
     return {
@@ -547,6 +591,33 @@ export function decideFromFacts(
       type: facts.type,
       reason_code:
         facts.reason_code || facts.type,
+      evidence: facts.evidence || "",
+      provider: providerName,
+      model,
+    };
+  }
+
+  if (
+    searchPlan?.company_size === "small" &&
+    facts.is_large_enterprise === true
+  ) {
+    return {
+      status: "rejected",
+      relevant: false,
+      type: facts.type,
+      reason_code: "too_large",
+      evidence: facts.evidence || "",
+      provider: providerName,
+      model,
+    };
+  }
+
+  if (facts.sells_what_target_needs === true) {
+    return {
+      status: "rejected",
+      relevant: false,
+      type: facts.type,
+      reason_code: "vendor_not_buyer",
       evidence: facts.evidence || "",
       provider: providerName,
       model,
@@ -798,6 +869,8 @@ export async function rankCandidates({
           type: "unknown",
           is_company_website: null,
           matches_search_plan: null,
+          sells_what_target_needs: null,
+          is_large_enterprise: null,
           reason_code:
             "llm-unavailable",
           evidence: "",
@@ -835,6 +908,7 @@ export async function rankCandidates({
       decideFromFacts(decision, {
         providerName,
         model,
+        searchPlan,
       });
 
     for (const candidate of domainCandidates) {

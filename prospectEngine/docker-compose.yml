@@ -72,7 +72,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SEARXNG_URL: http://searxng:8080
-      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-google}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-google cse,duckduckgo web,resulthunter,gmx,yandex,yep,bing}
       LLM_ENABLED: ${LLM_ENABLED:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       OPENAI_ENABLED: ${OPENAI_ENABLED:-false}
@@ -80,6 +80,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       MAX_SEARCH_QUERIES: ${MAX_SEARCH_QUERIES:-8}
       SEARXNG_QUERY_DELAY_MS: ${SEARXNG_QUERY_DELAY_MS:-15000}
+      CRAWL_MAX_CANDIDATES: ${CRAWL_MAX_CANDIDATES:-10}
+      CRAWL_MAX_PAGES_PER_DOMAIN: ${CRAWL_MAX_PAGES_PER_DOMAIN:-8}
       JINA_ENABLED: ${JINA_ENABLED:-false}
       JINA_API_KEY: ${JINA_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -113,7 +115,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SEARXNG_URL: http://searxng:8080
-      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-google}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-google cse,duckduckgo web,resulthunter,gmx,yandex,yep,bing}
       LLM_ENABLED: ${LLM_ENABLED:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       OPENAI_ENABLED: ${OPENAI_ENABLED:-false}
@@ -121,6 +123,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       MAX_SEARCH_QUERIES: ${MAX_SEARCH_QUERIES:-8}
       SEARXNG_QUERY_DELAY_MS: ${SEARXNG_QUERY_DELAY_MS:-15000}
+      CRAWL_MAX_CANDIDATES: ${CRAWL_MAX_CANDIDATES:-10}
+      CRAWL_MAX_PAGES_PER_DOMAIN: ${CRAWL_MAX_PAGES_PER_DOMAIN:-8}
       JINA_ENABLED: ${JINA_ENABLED:-false}
       JINA_API_KEY: ${JINA_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}

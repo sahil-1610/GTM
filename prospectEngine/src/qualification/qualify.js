@@ -531,3 +531,101 @@ export function shouldDeepCrawl(
     "qualified"
   );
 }
+
+// Smallest headcount in each size bucket the profile extractor returns.
+const SIZE_MIN_EMPLOYEES = { solo: 1, small: 2, mid: 51, large: 501 };
+
+export function targetTypesFor(icp, searchPlan) {
+  const types = [
+    ...listValues(icp?.company_types || icp?.companyTypes),
+    ...listValues(icp?.industries),
+  ];
+
+  if (types.length) {
+    return [...new Set(types)];
+  }
+
+  return [searchPlan?.company_type, searchPlan?.industry]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+function maxTargetSize(icp, searchPlan) {
+  const max = Number(icp?.company_size?.max);
+  if (max > 0) return max;
+  if (searchPlan?.company_size === "small") return 50;
+  if (searchPlan?.company_size === "mid") return 500;
+  return Infinity;
+}
+
+function targetLocation(icp, searchPlan) {
+  return [
+    ...listValues(icp?.geography || icp?.locations),
+    ...listValues(icp?.location),
+    ...listValues(searchPlan?.location),
+  ][0] || "";
+}
+
+function wantsB2B(icp, searchPlan) {
+  return /\bb2b\b/i.test([
+    icp?.ideal_customer,
+    ...listValues(icp?.company_types),
+    searchPlan?.target_description,
+    searchPlan?.company_type,
+  ].filter(Boolean).join(" "));
+}
+
+// Decides from LLM-extracted homepage facts. Any failed check is
+// not_qualified with that check as the reason; any unknown is review.
+export function qualifyProfile({ profile, icp = null, searchPlan = null } = {}) {
+  const failed = [];
+  const unsure = [];
+  const evidence = [];
+
+  if (profile.is_operating_company === false) {
+    failed.push("not an operating company");
+  } else if (profile.is_operating_company == null) {
+    unsure.push("unclear if it is an operating company");
+  }
+
+  const location = targetLocation(icp, searchPlan);
+  if (location) {
+    const country = String(profile.country || "").trim();
+    const matches = country &&
+      (country.toLowerCase().includes(location.toLowerCase()) ||
+        location.toLowerCase().includes(country.toLowerCase()));
+
+    if (!country) unsure.push(`no ${location} location on the site`);
+    else if (!matches) failed.push(`based in ${country}, not ${location}`);
+    else evidence.push(`based in ${[profile.city, country].filter(Boolean).join(", ")}`);
+  }
+
+  const maxSize = maxTargetSize(icp, searchPlan);
+  if (Number.isFinite(maxSize)) {
+    if (profile.company_size === "unknown") unsure.push("company size unknown");
+    else if (SIZE_MIN_EMPLOYEES[profile.company_size] > maxSize) failed.push(`too large (${profile.company_size})`);
+    else evidence.push(`size: ${profile.company_size}`);
+  }
+
+  if (wantsB2B(icp, searchPlan)) {
+    if (profile.sells_to === "b2c") failed.push("sells to consumers");
+    else if (profile.sells_to === "unknown") unsure.push("unclear if it sells to businesses");
+    else evidence.push(`sells to: ${profile.sells_to}`);
+  }
+
+  if (targetTypesFor(icp, searchPlan).length) {
+    if (profile.matching_target_types.length) evidence.push(`type: ${profile.matching_target_types.join(", ")}`);
+    else if (profile.business_type) failed.push(`not a target type (${profile.business_type})`);
+    else unsure.push("business type unknown");
+  }
+
+  if (!profile.evidence.length) {
+    unsure.push("no supporting quotes found on the site");
+  }
+
+  return {
+    status: failed.length ? "not_qualified" : unsure.length ? "review" : "qualified",
+    reasons: [...failed, ...unsure],
+    evidence,
+  };
+}

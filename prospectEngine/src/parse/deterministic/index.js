@@ -65,6 +65,7 @@ function extractCompanyFromDom($, url, html) {
     text: bodyText,
     roleEmails: companyContacts.role_emails,
     companyPhones: companyContacts.company_phones,
+    linkedinUrl: companyContacts.linkedin_url,
   });
 
   return {

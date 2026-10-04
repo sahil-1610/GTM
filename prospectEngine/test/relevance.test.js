@@ -29,6 +29,8 @@ function facts(domain, extra = {}) {
     type: extra.type || "company",
     is_company_website: extra.is_company_website ?? true,
     matches_search_plan: extra.matches_search_plan ?? true,
+    sells_what_target_needs: extra.sells_what_target_needs ?? false,
+    is_large_enterprise: extra.is_large_enterprise ?? false,
     reason_code: extra.reason_code || "matches_industry",
     evidence: extra.evidence || "solar company",
   };
@@ -148,6 +150,18 @@ async function main() {
     assert.equal(
       decideFromFacts(facts("acme.com", { matches_search_plan: false })).status,
       "rejected",
+    );
+    assert.equal(
+      decideFromFacts(facts("acme.com", { sells_what_target_needs: true })).reason_code,
+      "vendor_not_buyer",
+    );
+    assert.equal(
+      decideFromFacts(facts("tcs.com", { is_large_enterprise: true }), { searchPlan: { company_size: "small" } }).reason_code,
+      "too_large",
+    );
+    assert.equal(
+      decideFromFacts(facts("tcs.com", { is_large_enterprise: true }), { searchPlan: { company_size: "any" } }).status,
+      "approved",
     );
     assert.equal(decideFromFacts(null).status, "review");
   });
