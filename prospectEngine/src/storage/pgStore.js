@@ -8,7 +8,8 @@ export async function appendRawPage(page) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::timestamptz, now()),$10,$11)
      RETURNING *`,
     [page.url, page.url_hash, page.domain, page.source_type, page.fetch_backend,
-      page.status_code, page.html, page.content_hash, page.fetched_at,
+      // Postgres text cannot hold NUL bytes, which some sites send.
+      page.status_code, String(page.html ?? "").replace(/\u0000/g, ""), page.content_hash, page.fetched_at,
       page.parse_version, page.parsed_at]
   );
   return rows[0];

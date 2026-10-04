@@ -110,6 +110,19 @@ const ROLE_WORDS = new Set([
   "design",
   "customer",
   "success",
+  // Group bylines ("BW Reporters", "Editorial Desk") are not people.
+  "reporter",
+  "reporters",
+  "editor",
+  "editors",
+  "editorial",
+  "desk",
+  "bureau",
+  "staff",
+  "correspondent",
+  "author",
+  "authors",
+  "admin",
 ]);
 
 const STOP_WORDS = new Set([

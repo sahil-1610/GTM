@@ -55,6 +55,7 @@ import {
 import {
   contactPayload,
   dedupeContacts,
+  keepDecisionMakers,
   normalizeContact,
   parseNameTitleLine,
 } from "./parse/contact.js";
@@ -72,7 +73,7 @@ function sleep(ms) {
 
 async function persistLinkedInPeople({ domain, companyName, location, runId, icp }) {
   const people = await findLinkedInPeople({ companyName, location });
-  const contacts = dedupeContacts(
+  const contacts = keepDecisionMakers(dedupeContacts(
     people
       .map((person) => ({ person, parsed: parseNameTitleLine(person.line) }))
       .filter(({ parsed }) => parsed)
@@ -85,7 +86,7 @@ async function persistLinkedInPeople({ domain, companyName, location, runId, icp
           evidence: [person.snippet].filter(Boolean),
         }),
       ),
-  );
+  ));
 
   for (const contact of contacts) {
     await insertRawRecord({

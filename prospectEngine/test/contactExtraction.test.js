@@ -29,6 +29,7 @@ import {
   computeContactConfidence,
   normalizeContact,
   dedupeContacts,
+  keepDecisionMakers,
 } from "../src/parse/contact.js";
 import { isPlausibleName } from "../src/lib/names.js";
 
@@ -358,6 +359,18 @@ async function main() {
       normalizeContact({ full_name: "Neha Joshi", email: "neha@acme.in" }),
     ]);
     assert.equal(chain.length, 1);
+
+    const team = keepDecisionMakers([
+      normalizeContact({ full_name: "Ashish Gupta", title: "Founder and CEO" }),
+      normalizeContact({ full_name: "Rahul Jain", title: "Founder Director" }),
+      normalizeContact({ full_name: "Saurabh Kaushik", title: "Business Coach and Life Strategist" }),
+      normalizeContact({ full_name: "Sunita Biddu" }),
+      normalizeContact({ full_name: "James Marque", title: "Font-end Developer" }),
+      normalizeContact({ full_name: "Eli Lovelence", title: "Content Writter" }),
+      normalizeContact({ full_name: "Bhavesh Agarwal", title: "Sales Project Manager" }),
+    ]);
+    assert.deepEqual(team.map((c) => c.full_name), ["Ashish Gupta", "Rahul Jain", "Saurabh Kaushik", "Sunita Biddu"]);
+    assert.equal(isPlausibleName("BW Reporters"), false);
   });
 
   await test("LinkedIn profile links become contacts; company page goes on the company", () => {

@@ -40,6 +40,17 @@ export const ROLE_HINT =
 const JOB_TITLE_RE =
   /\b(ceo|cto|cfo|coo|cmo|cro|cio|vp|founder|co[- ]?founder|owner|president|director|manager|lead|head|chief|engineer|developer|analyst|specialist|consultant|partner|principal|chair(?:man|person)?|executive|officer|counsel|trainer|coach|advisor|adviser|associate|architect|designer|proprietor)\b/i;
 
+// Decision-making roles. ROLE_RULES groups titles by function, so a
+// "Front-end Developer" lands in technology_leader; this checks seniority.
+const DECISION_MAKER_RE =
+  /\b(founder|co[- ]?founder|founding|owner|proprietor|ceo|cto|cfo|coo|cmo|cro|cio|chief|president|vp|director|head|partner|principal|managing|chair(?:man|person)?|general manager|country manager|coach|consultant|mentor|advisor|adviser)\b/i;
+
+// Keeps people who can buy: a title must name a decision-making role, and
+// untitled people stay (their low confidence already sends them to review).
+export function keepDecisionMakers(contacts) {
+  return contacts.filter((contact) => !contact.title || DECISION_MAKER_RE.test(contact.title));
+}
+
 // Ordered most-specific-first so "co-founder" beats "founder" and a named
 // C-level ("CEO") beats the generic "executive" bucket.
 const ROLE_RULES = [

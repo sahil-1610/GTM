@@ -41,6 +41,7 @@ import {
 import {
   dedupeContacts,
   contactPayload,
+  keepDecisionMakers,
 } from "./contact.js";
 
 import {
@@ -323,7 +324,7 @@ export async function parseCompanyContacts({
     extracted.push(...result.contacts);
   }
 
-  const merged = dedupeContacts([...extracted, ...extraContacts]);
+  const merged = keepDecisionMakers(dedupeContacts([...extracted, ...extraContacts]));
 
   const persisted = [];
 
