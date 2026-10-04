@@ -43,7 +43,7 @@ const JOB_TITLE_RE =
 // Decision-making roles. ROLE_RULES groups titles by function, so a
 // "Front-end Developer" lands in technology_leader; this checks seniority.
 const DECISION_MAKER_RE =
-  /\b(founder|co[- ]?founder|founding|owner|proprietor|ceo|cto|cfo|coo|cmo|cro|cio|chief|president|vp|director|head|partner|principal|managing|chair(?:man|person)?|general manager|country manager|coach|consultant|mentor|advisor|adviser)\b/i;
+  /\b(founder|co[- ]?founder|founding|owner|proprietor|ceo|cto|cfo|coo|cmo|cro|cio|chief|president|vp|director|head|partner|principal|managing|manager|chair(?:man|person)?|coach|consultant|mentor|advisor|adviser)\b/i;
 
 // Keeps people who can buy: a title must name a decision-making role, and
 // untitled people stay (their low confidence already sends them to review).

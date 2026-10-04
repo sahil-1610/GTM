@@ -369,7 +369,7 @@ async function main() {
       normalizeContact({ full_name: "Eli Lovelence", title: "Content Writter" }),
       normalizeContact({ full_name: "Bhavesh Agarwal", title: "Sales Project Manager" }),
     ]);
-    assert.deepEqual(team.map((c) => c.full_name), ["Ashish Gupta", "Rahul Jain", "Saurabh Kaushik", "Sunita Biddu"]);
+    assert.deepEqual(team.map((c) => c.full_name), ["Ashish Gupta", "Rahul Jain", "Saurabh Kaushik", "Sunita Biddu", "Bhavesh Agarwal"]);
     assert.equal(isPlausibleName("BW Reporters"), false);
   });
 
